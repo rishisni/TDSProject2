@@ -163,56 +163,8 @@ if not openai.api_key:
     print("Error: AIPROXY_TOKEN is not set. Ensure the token is loaded in the environment.")
     sys.exit(1)
 
-def validate_arguments():
-    """Validate command-line arguments."""
-    if len(sys.argv) != 2:
-        print("Usage: python autolysis.py <dataset.csv>")
-        sys.exit(1)
-
-    csv_file = sys.argv[1]
-    if not os.path.exists(csv_file):
-        print(f"Error: File '{csv_file}' not found.")
-        sys.exit(1)
-
-    return csv_file
-
-def load_dataset(csv_file):
-    """Load the dataset from the given CSV file."""
-    try:
-        data = pd.read_csv(csv_file, encoding='ISO-8859-1')
-        return data
-    except Exception as e:
-        print(f"Error loading dataset: {e}")
-        sys.exit(1)
-
-def create_output_directory(dataset_name):
-    """Create the output directory for saving results."""
-    output_dir = os.path.join(dataset_name)
-    os.makedirs(output_dir, exist_ok=True)
-    return output_dir
-
-def save_correlation_heatmap(correlation_matrix, output_dir):
-    """Generate and save the correlation matrix heatmap."""
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap="coolwarm", cbar=True)
-    plt.title("Correlation Matrix")
-    plt.savefig(os.path.join(output_dir, "correlation_matrix.png"))
-    plt.close()
-
-def save_distribution_plots(data, output_dir):
-    """Generate and save distribution plots for numerical columns."""
-    numerical_columns = data.select_dtypes(include=[np.number]).columns
-    for column in numerical_columns:
-        plt.figure(figsize=(8, 6))
-        sns.histplot(data[column].dropna(), kde=True, bins=30, color="blue")
-        plt.title(f"Distribution of {column}")
-        plt.xlabel(column)
-        plt.ylabel("Frequency")
-        plt.savefig(os.path.join(output_dir, f"{column}_distribution.png"))
-        plt.close()
-
-def call_llm(prompt):
-    """Call the LLM with the given prompt and return the response."""
+# Function to call the LLM
+def get_llm_response(prompt):
     try:
         print("Sending request to LLM...")
         response = openai.ChatCompletion.create(
@@ -232,9 +184,76 @@ def call_llm(prompt):
         print(f"Error with LLM: {e}")
         return "LLM analysis failed."
 
-def generate_readme(data, output_dir, llm_analysis, missing_values):
-    """Generate the README.md content and save it."""
-    markdown_content = f"""
+# Validate command-line arguments
+if len(sys.argv) != 2:
+    print("Usage: python autolysis.py <dataset.csv>")
+    sys.exit(1)
+
+# Load the dataset
+csv_file = sys.argv[1]
+if not os.path.exists(csv_file):
+    print(f"File {csv_file} not found.")
+    sys.exit(1)
+
+try:
+    data = pd.read_csv(csv_file, encoding='ISO-8859-1')
+except Exception as e:
+    print(f"Error loading dataset: {e}")
+    sys.exit(1)
+
+# Generate summary statistics
+summary_stats = data.describe(include="all").transpose()
+missing_values = data.isnull().sum()
+correlation_matrix = data.corr(numeric_only=True)
+
+# Define the output directory based on the dataset name
+dataset_name = os.path.splitext(os.path.basename(csv_file))[0]
+output_dir = os.path.join(dataset_name)
+
+# Create the output directory if it doesn't exist
+os.makedirs(output_dir, exist_ok=True)
+
+# Save correlation matrix heatmap
+plt.figure(figsize=(10, 8))
+sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap="coolwarm", cbar=True)
+plt.title("Correlation Matrix")
+plt.savefig(os.path.join(output_dir, "correlation_matrix.png"))
+plt.close()
+
+# Generate distribution plots for numerical columns
+for column in data.select_dtypes(include=[np.number]).columns:
+    plt.figure(figsize=(8, 6))
+    sns.histplot(data[column].dropna(), kde=True, bins=30, color="blue")
+    plt.title(f"Distribution of {column}")
+    plt.xlabel(column)
+    plt.ylabel("Frequency")
+    plt.savefig(os.path.join(output_dir, f"{column}_distribution.png"))
+    plt.close()
+
+# Prepare data for LLM
+sample_data = data.head(5).to_dict(orient="records")
+llm_prompt = f"""
+You are an AI data analyst. Here's the dataset summary:
+- Number of Rows: {data.shape[0]}
+- Number of Columns: {data.shape[1]}
+- Columns: {list(data.columns)}
+- Data Types: {data.dtypes.to_dict()}
+- Missing Values: {missing_values.to_dict()}
+- Sample Data: {sample_data}
+
+Your task:
+1. Analyze the dataset.
+2. Highlight important trends, outliers, and correlations.
+3. Suggest potential applications or interpretations of the data.
+4. Provide actionable insights.
+
+Be concise and professional.
+"""
+
+llm_analysis = get_llm_response(llm_prompt)
+
+# Generate README.md content
+markdown_content = f"""
 # Automated Analysis Report
 
 ## Dataset Overview
@@ -252,55 +271,14 @@ def generate_readme(data, output_dir, llm_analysis, missing_values):
 
 ### Distributions
 """
-    
-    # Add distribution plots to the README content
-    for column in data.select_dtypes(include=[np.number]).columns:
-        markdown_content += f"![{column} Distribution]({column}_distribution.png)\n"
 
-    # Save README.md inside the output directory
-    readme_path = os.path.join(output_dir, "README.md")
-    with open(readme_path, "w") as f:
-        f.write(markdown_content)
+# Add distribution plots to the README content
+for column in data.select_dtypes(include=[np.number]).columns:
+    markdown_content += f"![{column} Distribution]({column}_distribution.png)\n"
 
-    print(f"README.md generated at {readme_path}")
+# Save README.md inside the output directory
+readme_path = os.path.join(output_dir, "README.md")
+with open(readme_path, "w") as f:
+    f.write(markdown_content)
 
-def main():
-    """Main execution logic."""
-    csv_file = validate_arguments()
-    data = load_dataset(csv_file)
-
-    # Generate summary statistics
-    summary_stats = data.describe(include="all").transpose()
-    missing_values = data.isnull().sum()
-    correlation_matrix = data.corr(numeric_only=True)
-
-    # Create output directory
-    dataset_name = os.path.splitext(os.path.basename(csv_file))[0]
-    output_dir = create_output_directory(dataset_name)
-
-    # Save visualizations
-    save_correlation_heatmap(correlation_matrix, output_dir)
-    save_distribution_plots(data, output_dir)
-
-    # Prepare data for LLM analysis
-    sample_data = data.head(5).to_dict(orient="records")
-    llm_prompt = f"""
-You are an AI analyst. Here's the dataset summary:
-- Columns: {list(data.columns)}
-- Data types: {data.dtypes.to_dict()}
-- Missing values: {missing_values.to_dict()}
-- Sample data: {sample_data}
-
-Perform the following:
-1. Analyze the data and provide insights.
-2. Suggest any interesting trends, outliers, or relationships.
-
-Be concise and professional.
-"""
-
-    llm_analysis = call_llm(llm_prompt)
-
-    # Generate README file
-    generate_readme(data, output_dir, llm_analysis, missing_values)
-
-    print(f"Analysis complete. Outputs saved in {output_dir}/")
+print(f"Analysis complete. Outputs saved in {output_dir}/README.md and PNG files.")
